@@ -1,0 +1,119 @@
+<main class="page-layout">
+  <section class="hero card">
+    <div class="hero__content">
+      <p class="eyebrow">Web only • PWA ready • Mobile and desktop</p>
+      <h1>{{ pageTitle }}</h1>
+      <p class="hero__text">
+        Capture photos even when the device is offline. Each image is saved in IndexedDB, and the
+        current coordinates are attached whenever GPS is available.
+      </p>
+    </div>
+
+    <div class="status-grid" aria-label="Application status">
+      <article class="status-card" [class.status-card--good]="isOnline()" [class.status-card--warn]="!isOnline()">
+        <p class="status-card__label">Connection</p>
+        <h2>{{ isOnline() ? 'Online' : 'Offline' }}</h2>
+        <p>{{ onlineMessage() }}</p>
+      </article>
+
+      <article class="status-card" [class.status-card--good]="gpsStatus() === 'on'" [class.status-card--warn]="gpsStatus() !== 'on'">
+        <div class="status-card__header">
+          <div>
+            <p class="status-card__label">GPS</p>
+            <h2>
+              @switch (gpsStatus()) {
+                @case ('on') {
+                  On
+                }
+                @case ('unsupported') {
+                  Unavailable
+                }
+                @default {
+                  Off
+                }
+              }
+            </h2>
+          </div>
+
+          <button type="button" class="secondary-button" (click)="refreshGpsStatus()">Refresh GPS</button>
+        </div>
+
+        <p>{{ gpsDetails() }}</p>
+
+        @if (latestCoordinates(); as coordinates) {
+          <p class="coordinates">
+            {{ coordinates.latitude | number: '1.4-4' }}, {{ coordinates.longitude | number: '1.4-4' }}
+            <span>± {{ coordinates.accuracy | number: '1.0-0' }} m</span>
+          </p>
+        }
+      </article>
+    </div>
+  </section>
+
+  <section class="card capture-card" [attr.aria-busy]="isSaving()">
+    <div>
+      <h2>Take or choose a picture</h2>
+      <p>
+        On phones, the button can open the camera directly. On desktops, it opens the file picker.
+      </p>
+    </div>
+
+    <label class="primary-button file-picker">
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        [disabled]="isSaving()"
+        (change)="onPhotoSelected($event)"
+      />
+      <span>{{ isSaving() ? 'Saving…' : 'Take or choose a photo' }}</span>
+    </label>
+
+    @if (feedbackMessage(); as message) {
+      <p class="feedback" role="status">{{ message }}</p>
+    }
+  </section>
+
+  <section class="gallery-header">
+    <div>
+      <h2>Saved photos</h2>
+      <p>{{ storageSummary() }}</p>
+    </div>
+  </section>
+
+  @if (photos().length === 0) {
+    <section class="card empty-state">
+      <h2>No photo saved yet</h2>
+      <p>Your first captured image will appear here and remain available offline.</p>
+    </section>
+  } @else {
+    <ul class="photo-grid" aria-label="Saved photos">
+      @for (photo of photos(); track photo.id) {
+        <li class="card photo-card">
+          <img [src]="photo.previewUrl" alt="Saved field photo" />
+
+          <div class="photo-card__content">
+            <p class="photo-card__date">{{ photo.createdAt | date: 'medium' }}</p>
+
+            @if (photo.latitude !== null && photo.longitude !== null) {
+              <p>
+                GPS: {{ photo.latitude | number: '1.4-4' }},
+                {{ photo.longitude | number: '1.4-4' }}
+              </p>
+
+              @if (photo.accuracy !== null) {
+                <p>Accuracy: ± {{ photo.accuracy | number: '1.0-0' }} m</p>
+              }
+            } @else {
+              <p>GPS: unavailable for this photo.</p>
+            }
+
+            <button type="button" class="secondary-button" (click)="deletePhoto(photo.id)">
+              Delete photo
+            </button>
+          </div>
+        </li>
+      }
+    </ul>
+  }
+</main>

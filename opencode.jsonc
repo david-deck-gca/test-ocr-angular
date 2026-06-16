@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "project": {
+      "mode": "primary",
+      "prompt": "You're an expert in Angular 22, Ionic and Capacitor. You must follow Angular 22 best pratices using it's MCP server."
+    }
+  },
+  "mcp": {
+    "angular": {
+      "type": "local",
+      "command": ["npx", "-y", "@angular/cli", "mcp"],
+      "enabled": true,
+    }
+  }
+}
