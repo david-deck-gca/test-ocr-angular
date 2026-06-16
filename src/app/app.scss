@@ -190,6 +190,18 @@ h2 {
   padding: 1rem;
 }
 
+.photo-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.primary-button[disabled],
+.secondary-button[disabled] {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 @media (min-width: 48rem) {
   .page-layout {
     padding: 2rem;

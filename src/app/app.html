@@ -108,9 +108,22 @@
               <p>GPS: unavailable for this photo.</p>
             }
 
-            <button type="button" class="secondary-button" (click)="deletePhoto(photo.id)">
-              Delete photo
-            </button>
+            <div class="photo-card__actions">
+              @if (photo.latitude !== null && photo.longitude !== null) {
+                <button
+                  type="button"
+                  class="primary-button"
+                  [disabled]="navigatingPhotoId() === photo.id"
+                  (click)="openDirectionsToPhoto(photo)"
+                >
+                  {{ navigatingPhotoId() === photo.id ? 'Opening maps…' : 'Open directions' }}
+                </button>
+              }
+
+              <button type="button" class="secondary-button" (click)="deletePhoto(photo.id)">
+                Delete photo
+              </button>
+            </div>
           </div>
         </li>
       }

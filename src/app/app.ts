@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { DatePipe, DecimalPipe } from '@angular/common';
 
 import { GeolocationService } from './geolocation.service';
+import { MapsNavigationService } from './maps-navigation.service';
 import { NetworkStatusService } from './network-status.service';
 import { PhotoStorageService, SavedPhoto } from './photo-storage.service';
 
@@ -15,10 +16,12 @@ import { PhotoStorageService, SavedPhoto } from './photo-storage.service';
 export class App {
   private readonly networkStatusService = inject(NetworkStatusService);
   private readonly geolocationService = inject(GeolocationService);
+  private readonly mapsNavigationService = inject(MapsNavigationService);
   private readonly photoStorageService = inject(PhotoStorageService);
 
   protected readonly photos = signal<SavedPhoto[]>([]);
   protected readonly isSaving = signal(false);
+  protected readonly navigatingPhotoId = signal<string | null>(null);
   protected readonly feedbackMessage = signal<string | null>(null);
 
   protected readonly isOnline = this.networkStatusService.isOnline;
@@ -86,6 +89,41 @@ export class App {
     await this.photoStorageService.deletePhoto(id);
     await this.refreshPhotos();
     this.feedbackMessage.set('Photo deleted.');
+  }
+
+  protected async openDirectionsToPhoto(photo: SavedPhoto): Promise<void> {
+    if (photo.latitude === null || photo.longitude === null) {
+      this.feedbackMessage.set('This photo does not have a saved location.');
+      return;
+    }
+
+    this.navigatingPhotoId.set(photo.id);
+    this.feedbackMessage.set('Opening directions…');
+
+    try {
+      const currentCoordinates = await this.geolocationService.captureSnapshot({ updateSignals: true });
+
+      this.mapsNavigationService.openDirections(
+        {
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+        },
+        currentCoordinates
+          ? {
+              latitude: currentCoordinates.latitude,
+              longitude: currentCoordinates.longitude,
+            }
+          : undefined,
+      );
+
+      this.feedbackMessage.set(
+        currentCoordinates
+          ? 'Opening directions in your maps app.'
+          : 'Opening the destination in your maps app. Allow location access to start from your current position.',
+      );
+    } finally {
+      this.navigatingPhotoId.set(null);
+    }
   }
 
   private async refreshPhotos(): Promise<void> {
