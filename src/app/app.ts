@@ -4,6 +4,7 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { GeolocationService } from './geolocation.service';
 import { MapsNavigationService } from './maps-navigation.service';
 import { NetworkStatusService } from './network-status.service';
+import { PhotoOcrService } from './photo-ocr.service';
 import { PhotoStorageService, SavedPhoto } from './photo-storage.service';
 
 @Component({
@@ -17,7 +18,9 @@ export class App {
   private readonly networkStatusService = inject(NetworkStatusService);
   private readonly geolocationService = inject(GeolocationService);
   private readonly mapsNavigationService = inject(MapsNavigationService);
+  private readonly photoOcrService = inject(PhotoOcrService);
   private readonly photoStorageService = inject(PhotoStorageService);
+  private ocrQueue = Promise.resolve();
 
   protected readonly photos = signal<SavedPhoto[]>([]);
   protected readonly isSaving = signal(false);
@@ -41,7 +44,7 @@ export class App {
   });
 
   constructor() {
-    void this.refreshPhotos();
+    void this.initialize();
   }
 
   protected async onPhotoSelected(event: Event): Promise<void> {
@@ -68,13 +71,17 @@ export class App {
 
     try {
       const coordinates = await this.geolocationService.captureSnapshot({ updateSignals: false });
-      await this.photoStorageService.savePhoto(file, coordinates);
+      const photoId = await this.photoStorageService.savePhoto(file, coordinates);
       await this.refreshPhotos();
       this.feedbackMessage.set(
         coordinates
-          ? 'Photo saved in IndexedDB with the latest GPS coordinates.'
-          : 'Photo saved in IndexedDB without GPS coordinates.',
+          ? 'Photo saved in IndexedDB with the latest GPS coordinates. Offline text extraction has started.'
+          : 'Photo saved in IndexedDB without GPS coordinates. Offline text extraction has started.',
       );
+      this.enqueuePhotoTextExtraction({
+        id: photoId,
+        blob: file,
+      });
     } finally {
       this.isSaving.set(false);
       input.value = '';
@@ -89,6 +96,19 @@ export class App {
     await this.photoStorageService.deletePhoto(id);
     await this.refreshPhotos();
     this.feedbackMessage.set('Photo deleted.');
+  }
+
+  protected async retryPhotoTextExtraction(photo: SavedPhoto): Promise<void> {
+    const pendingJob = await this.photoStorageService.preparePhotoOcrRetry(photo.id);
+
+    if (!pendingJob) {
+      this.feedbackMessage.set('Unable to queue text extraction for this photo.');
+      return;
+    }
+
+    await this.refreshPhotos();
+    this.feedbackMessage.set('Retrying offline text extraction…');
+    this.enqueuePhotoTextExtraction(pendingJob);
   }
 
   protected async openDirectionsToPhoto(photo: SavedPhoto): Promise<void> {
@@ -123,6 +143,42 @@ export class App {
       );
     } finally {
       this.navigatingPhotoId.set(null);
+    }
+  }
+
+  private async initialize(): Promise<void> {
+    await this.refreshPhotos();
+    await this.resumePendingPhotoTextExtraction();
+  }
+
+  private enqueuePhotoTextExtraction(photo: { id: string; blob: Blob }): void {
+    this.ocrQueue = this.ocrQueue
+      .then(() => this.processPhotoTextExtraction(photo))
+      .catch(() => undefined);
+  }
+
+  private async processPhotoTextExtraction(photo: { id: string; blob: Blob }): Promise<void> {
+    try {
+      const extractedText = await this.photoOcrService.extractText(photo.blob);
+      await this.photoStorageService.completePhotoOcr(photo.id, extractedText);
+      this.feedbackMessage.set(
+        extractedText.text
+          ? 'Offline text extraction finished and was stored with the photo.'
+          : 'Offline text extraction finished. No readable text was detected.',
+      );
+    } catch {
+      await this.photoStorageService.failPhotoOcr(photo.id);
+      this.feedbackMessage.set('Offline text extraction failed for this photo.');
+    } finally {
+      await this.refreshPhotos();
+    }
+  }
+
+  private async resumePendingPhotoTextExtraction(): Promise<void> {
+    const pendingPhotos = await this.photoStorageService.loadPhotosNeedingOcr();
+
+    for (const pendingPhoto of pendingPhotos) {
+      this.enqueuePhotoTextExtraction(pendingPhoto);
     }
   }
 

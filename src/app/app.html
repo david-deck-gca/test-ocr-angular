@@ -108,6 +108,34 @@
               <p>GPS: unavailable for this photo.</p>
             }
 
+            <section class="ocr-panel" aria-label="Extracted text">
+              <p class="photo-card__label">Extracted text</p>
+
+              @switch (photo.ocrStatus) {
+                @case ('pending') {
+                  <p class="ocr-status" role="status">Extracting English and French text offline…</p>
+                }
+                @case ('failed') {
+                  <p class="ocr-status ocr-status--error">Offline text extraction failed.</p>
+
+                  <button type="button" class="secondary-button" (click)="retryPhotoTextExtraction(photo)">
+                    Retry text extraction
+                  </button>
+                }
+                @default {
+                  @if (photo.ocrText) {
+                    <p class="ocr-text">{{ photo.ocrText }}</p>
+
+                    @if (photo.ocrConfidence !== null) {
+                      <p>Confidence: {{ photo.ocrConfidence | number: '1.0-0' }}%</p>
+                    }
+                  } @else {
+                    <p>No readable English or French text was detected in this photo.</p>
+                  }
+                }
+              }
+            </section>
+
             <div class="photo-card__actions">
               @if (photo.latitude !== null && photo.longitude !== null) {
                 <button
