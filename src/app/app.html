@@ -113,13 +113,20 @@
 
               @switch (photo.ocrStatus) {
                 @case ('pending') {
+                  <p class="ocr-status">Select a text area before running offline OCR.</p>
+
+                  <button type="button" class="secondary-button" (click)="openTextCropDialog(photo)">
+                    Select text area
+                  </button>
+                }
+                @case ('processing') {
                   <p class="ocr-status" role="status">Extracting English and French text offline…</p>
                 }
                 @case ('failed') {
                   <p class="ocr-status ocr-status--error">Offline text extraction failed.</p>
 
-                  <button type="button" class="secondary-button" (click)="retryPhotoTextExtraction(photo)">
-                    Retry text extraction
+                  <button type="button" class="secondary-button" (click)="openTextCropDialog(photo)">
+                    Select text area again
                   </button>
                 }
                 @default {
@@ -156,5 +163,13 @@
         </li>
       }
     </ul>
+  }
+
+  @if (cropDialogPhoto(); as photo) {
+    <app-photo-crop-dialog
+      [imageUrl]="photo.previewUrl"
+      (cancelled)="cancelCropDialog()"
+      (confirmCrop)="confirmCrop($event)"
+    />
   }
 </main>

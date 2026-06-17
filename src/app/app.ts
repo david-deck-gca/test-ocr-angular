@@ -3,13 +3,20 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 
 import { GeolocationService } from './geolocation.service';
 import { MapsNavigationService } from './maps-navigation.service';
+import { CropSelection, PhotoCropDialogComponent } from './photo-crop-dialog';
 import { NetworkStatusService } from './network-status.service';
 import { PhotoOcrService } from './photo-ocr.service';
-import { PhotoStorageService, SavedPhoto } from './photo-storage.service';
+import { PendingPhotoOcrJob, PhotoStorageService, SavedPhoto } from './photo-storage.service';
+
+interface CropDialogPhoto extends PendingPhotoOcrJob {
+  previewUrl: string;
+}
+
+type LoadedRasterImage = HTMLImageElement | ImageBitmap;
 
 @Component({
   selector: 'app-root',
-  imports: [DatePipe, DecimalPipe],
+  imports: [DatePipe, DecimalPipe, PhotoCropDialogComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -20,12 +27,12 @@ export class App {
   private readonly mapsNavigationService = inject(MapsNavigationService);
   private readonly photoOcrService = inject(PhotoOcrService);
   private readonly photoStorageService = inject(PhotoStorageService);
-  private ocrQueue = Promise.resolve();
 
   protected readonly photos = signal<SavedPhoto[]>([]);
   protected readonly isSaving = signal(false);
   protected readonly navigatingPhotoId = signal<string | null>(null);
   protected readonly feedbackMessage = signal<string | null>(null);
+  protected readonly cropDialogPhoto = signal<CropDialogPhoto | null>(null);
 
   protected readonly isOnline = this.networkStatusService.isOnline;
   protected readonly gpsStatus = this.geolocationService.status;
@@ -73,15 +80,12 @@ export class App {
       const coordinates = await this.geolocationService.captureSnapshot({ updateSignals: false });
       const photoId = await this.photoStorageService.savePhoto(file, coordinates);
       await this.refreshPhotos();
+      this.openCropDialogForSavedPhotoId(photoId, file);
       this.feedbackMessage.set(
         coordinates
-          ? 'Photo saved in IndexedDB with the latest GPS coordinates. Offline text extraction has started.'
-          : 'Photo saved in IndexedDB without GPS coordinates. Offline text extraction has started.',
+          ? 'Photo saved in IndexedDB with the latest GPS coordinates. Select the text area to start OCR.'
+          : 'Photo saved in IndexedDB without GPS coordinates. Select the text area to start OCR.',
       );
-      this.enqueuePhotoTextExtraction({
-        id: photoId,
-        blob: file,
-      });
     } finally {
       this.isSaving.set(false);
       input.value = '';
@@ -94,21 +98,69 @@ export class App {
 
   protected async deletePhoto(id: string): Promise<void> {
     await this.photoStorageService.deletePhoto(id);
+
+    if (this.cropDialogPhoto()?.id === id) {
+      this.cropDialogPhoto.set(null);
+    }
+
     await this.refreshPhotos();
     this.feedbackMessage.set('Photo deleted.');
   }
 
-  protected async retryPhotoTextExtraction(photo: SavedPhoto): Promise<void> {
-    const pendingJob = await this.photoStorageService.preparePhotoOcrRetry(photo.id);
+  protected async openTextCropDialog(photo: SavedPhoto): Promise<void> {
+    const ocrJob = await this.photoStorageService.loadPhotoOcrJob(photo.id);
 
-    if (!pendingJob) {
-      this.feedbackMessage.set('Unable to queue text extraction for this photo.');
+    if (!ocrJob) {
+      this.feedbackMessage.set('Unable to load this photo for OCR.');
       return;
     }
 
+    this.cropDialogPhoto.set({
+      ...ocrJob,
+      previewUrl: photo.previewUrl,
+    });
+
+    this.feedbackMessage.set(
+      photo.ocrStatus === 'failed'
+        ? 'Select a new text area and retry OCR.'
+        : 'Select the text area to analyze offline.',
+    );
+  }
+
+  protected cancelCropDialog(): void {
+    this.cropDialogPhoto.set(null);
+  }
+
+  protected async confirmCrop(selection: CropSelection | null): Promise<void> {
+    const cropDialogPhoto = this.cropDialogPhoto();
+
+    if (!cropDialogPhoto) {
+      return;
+    }
+
+    this.cropDialogPhoto.set(null);
+    await this.photoStorageService.markPhotoOcrProcessing(cropDialogPhoto.id);
     await this.refreshPhotos();
-    this.feedbackMessage.set('Retrying offline text extraction…');
-    this.enqueuePhotoTextExtraction(pendingJob);
+    this.feedbackMessage.set('Extracting English and French text offline…');
+
+    try {
+      const ocrBlob = selection
+        ? await this.createCroppedBlob(cropDialogPhoto.blob, selection)
+        : cropDialogPhoto.blob;
+      const extractedText = await this.photoOcrService.extractText(ocrBlob);
+
+      await this.photoStorageService.completePhotoOcr(cropDialogPhoto.id, extractedText);
+      this.feedbackMessage.set(
+        extractedText.text
+          ? 'Offline text extraction finished and was stored with the photo.'
+          : 'Offline text extraction finished. No readable English or French text was detected.',
+      );
+    } catch {
+      await this.photoStorageService.failPhotoOcr(cropDialogPhoto.id);
+      this.feedbackMessage.set('Offline text extraction failed for this photo.');
+    } finally {
+      await this.refreshPhotos();
+    }
   }
 
   protected async openDirectionsToPhoto(photo: SavedPhoto): Promise<void> {
@@ -147,39 +199,89 @@ export class App {
   }
 
   private async initialize(): Promise<void> {
+    await this.photoStorageService.resetProcessingPhotosToPending();
     await this.refreshPhotos();
-    await this.resumePendingPhotoTextExtraction();
   }
 
-  private enqueuePhotoTextExtraction(photo: { id: string; blob: Blob }): void {
-    this.ocrQueue = this.ocrQueue
-      .then(() => this.processPhotoTextExtraction(photo))
-      .catch(() => undefined);
+  private openCropDialogForSavedPhotoId(photoId: string, blob: Blob): void {
+    const savedPhoto = this.photos().find((photo) => photo.id === photoId);
+
+    if (!savedPhoto) {
+      return;
+    }
+
+    this.cropDialogPhoto.set({
+      id: photoId,
+      blob,
+      previewUrl: savedPhoto.previewUrl,
+    });
   }
 
-  private async processPhotoTextExtraction(photo: { id: string; blob: Blob }): Promise<void> {
+  private async createCroppedBlob(sourceBlob: Blob, selection: CropSelection): Promise<Blob> {
+    const rasterImage = await this.loadRasterImage(sourceBlob);
+
     try {
-      const extractedText = await this.photoOcrService.extractText(photo.blob);
-      await this.photoStorageService.completePhotoOcr(photo.id, extractedText);
-      this.feedbackMessage.set(
-        extractedText.text
-          ? 'Offline text extraction finished and was stored with the photo.'
-          : 'Offline text extraction finished. No readable text was detected.',
-      );
-    } catch {
-      await this.photoStorageService.failPhotoOcr(photo.id);
-      this.feedbackMessage.set('Offline text extraction failed for this photo.');
+      const width = rasterImage instanceof ImageBitmap ? rasterImage.width : rasterImage.naturalWidth;
+      const height = rasterImage instanceof ImageBitmap ? rasterImage.height : rasterImage.naturalHeight;
+      const cropLeft = Math.round(selection.left * width);
+      const cropTop = Math.round(selection.top * height);
+      const cropWidth = Math.max(1, Math.round(selection.width * width));
+      const cropHeight = Math.max(1, Math.round(selection.height * height));
+      const canvas = document.createElement('canvas');
+      canvas.width = cropWidth;
+      canvas.height = cropHeight;
+
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        throw new Error('Unable to crop the selected image area.');
+      }
+
+      context.drawImage(rasterImage, cropLeft, cropTop, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+      return await this.canvasToBlob(canvas, sourceBlob.type || 'image/jpeg');
     } finally {
-      await this.refreshPhotos();
+      this.releaseRasterImage(rasterImage);
     }
   }
 
-  private async resumePendingPhotoTextExtraction(): Promise<void> {
-    const pendingPhotos = await this.photoStorageService.loadPhotosNeedingOcr();
-
-    for (const pendingPhoto of pendingPhotos) {
-      this.enqueuePhotoTextExtraction(pendingPhoto);
+  private async loadRasterImage(sourceBlob: Blob): Promise<LoadedRasterImage> {
+    if (typeof createImageBitmap === 'function') {
+      return createImageBitmap(sourceBlob);
     }
+
+    return new Promise<LoadedRasterImage>((resolve, reject) => {
+      const image = new Image();
+      const imageUrl = URL.createObjectURL(sourceBlob);
+      image.onload = () => {
+        URL.revokeObjectURL(imageUrl);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(imageUrl);
+        reject(new Error('Unable to load the selected image for cropping.'));
+      };
+      image.src = imageUrl;
+    });
+  }
+
+  private releaseRasterImage(rasterImage: LoadedRasterImage): void {
+    if (rasterImage instanceof ImageBitmap) {
+      rasterImage.close();
+    }
+  }
+
+  private canvasToBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+
+        reject(new Error('Unable to create the cropped image blob.'));
+      }, mimeType, 0.92);
+    });
   }
 
   private async refreshPhotos(): Promise<void> {

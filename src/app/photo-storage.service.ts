@@ -7,7 +7,7 @@ export interface PhotoCoordinates {
   capturedAt: string;
 }
 
-export type PhotoOcrStatus = 'pending' | 'done' | 'failed';
+export type PhotoOcrStatus = 'pending' | 'processing' | 'done' | 'failed';
 
 export interface PendingPhotoOcrJob {
   id: string;
@@ -132,6 +132,42 @@ export class PhotoStorageService {
       }));
   }
 
+  async loadPhotoOcrJob(id: string): Promise<PendingPhotoOcrJob | null> {
+    if (this.isIndexedDbSupported()) {
+      return this.withStore('readonly', async (store) => {
+        const existingRecord = await this.requestToPromise(store.get(id));
+
+        if (!existingRecord) {
+          return null;
+        }
+
+        const record = this.normalizeRecord(existingRecord);
+        return {
+          id: record.id,
+          blob: record.blob,
+        };
+      });
+    }
+
+    const matchingRecord = this.fallbackRecords.find((record) => record.id === id);
+
+    if (!matchingRecord) {
+      return null;
+    }
+
+    return {
+      id: matchingRecord.id,
+      blob: matchingRecord.blob,
+    };
+  }
+
+  async markPhotoOcrProcessing(id: string): Promise<void> {
+    await this.updatePhotoRecord(id, (record) => ({
+      ...record,
+      ocrStatus: 'processing',
+    }));
+  }
+
   async completePhotoOcr(id: string, update: PhotoOcrUpdate): Promise<void> {
     await this.updatePhotoRecord(id, (record) => ({
       ...record,
@@ -148,6 +184,40 @@ export class PhotoStorageService {
       ocrConfidence: null,
       ocrStatus: 'failed',
     }));
+  }
+
+  async resetProcessingPhotosToPending(): Promise<void> {
+    if (this.isIndexedDbSupported()) {
+      await this.withStore('readwrite', async (store) => {
+        const records = await this.requestToPromise(store.getAll());
+
+        for (const record of records.map((item) => this.normalizeRecord(item))) {
+          if (record.ocrStatus !== 'processing') {
+            continue;
+          }
+
+          await this.requestToPromise(
+            store.put({
+              ...record,
+              ocrStatus: 'pending',
+            }),
+          );
+        }
+      });
+
+      return;
+    }
+
+    for (const [index, record] of this.fallbackRecords.entries()) {
+      if (record.ocrStatus !== 'processing') {
+        continue;
+      }
+
+      this.fallbackRecords.splice(index, 1, {
+        ...record,
+        ocrStatus: 'pending',
+      });
+    }
   }
 
   async preparePhotoOcrRetry(id: string): Promise<PendingPhotoOcrJob | null> {
