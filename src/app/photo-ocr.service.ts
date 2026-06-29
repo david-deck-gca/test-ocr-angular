@@ -32,7 +32,7 @@ export class PhotoOcrService {
   }
 
   private async createConfiguredWorker(): Promise<Worker> {
-    const worker = await createWorker(['eng', 'fra'], OEM.LSTM_ONLY, {
+    const worker = await createWorker('eng', OEM.LSTM_ONLY, {
       workerPath: this.buildAssetUrl('ocr/worker.min.js'),
       corePath: this.buildAssetDirectoryUrl('ocr/core'),
       langPath: this.buildAssetDirectoryUrl('ocr/lang'),

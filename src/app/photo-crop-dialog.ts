@@ -23,8 +23,8 @@ interface DragPoint {
             <p class="crop-dialog__eyebrow">Manual crop before OCR</p>
             <h2 id="crop-dialog-title">Select the text area</h2>
             <p>
-              Drag over the image to choose the region to analyze offline. English and French OCR will
-              run only on the selected area.
+              Drag over the image to choose the region to analyze offline. English OCR will run only
+              on the selected area.
             </p>
           </div>
 

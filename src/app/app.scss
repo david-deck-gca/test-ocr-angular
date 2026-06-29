@@ -113,6 +113,12 @@ h2 {
   padding: 1.5rem;
 }
 
+.capture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .file-picker {
   align-items: center;
   display: inline-flex;

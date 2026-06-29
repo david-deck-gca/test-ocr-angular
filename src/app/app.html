@@ -53,21 +53,37 @@
   <section class="card capture-card" [attr.aria-busy]="isSaving()">
     <div>
       <h2>Take or choose a picture</h2>
-      <p>
-        On phones, the button can open the camera directly. On desktops, it opens the file picker.
-      </p>
+      @if (showMobileCaptureOptions) {
+        <p>On mobile devices, you can take a new photo or choose one already stored on the device.</p>
+      } @else {
+        <p>On desktops, this opens the file picker.</p>
+      }
     </div>
 
-    <label class="primary-button file-picker">
-      <input
-        type="file"
-        accept="image/*"
-        capture="environment"
-        [disabled]="isSaving()"
-        (change)="onPhotoSelected($event)"
-      />
-      <span>{{ isSaving() ? 'Saving…' : 'Take or choose a photo' }}</span>
-    </label>
+    <div class="capture-actions">
+      @if (showMobileCaptureOptions) {
+        <label class="primary-button file-picker">
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            [disabled]="isSaving()"
+            (change)="onPhotoSelected($event)"
+          />
+          <span>{{ isSaving() ? 'Saving…' : 'Take a new picture' }}</span>
+        </label>
+
+        <label class="secondary-button file-picker">
+          <input type="file" accept="image/*" [disabled]="isSaving()" (change)="onPhotoSelected($event)" />
+          <span>Pick from gallery</span>
+        </label>
+      } @else {
+        <label class="primary-button file-picker">
+          <input type="file" accept="image/*" [disabled]="isSaving()" (change)="onPhotoSelected($event)" />
+          <span>{{ isSaving() ? 'Saving…' : 'Choose a photo' }}</span>
+        </label>
+      }
+    </div>
 
     @if (feedbackMessage(); as message) {
       <p class="feedback" role="status">{{ message }}</p>
@@ -120,7 +136,7 @@
                   </button>
                 }
                 @case ('processing') {
-                  <p class="ocr-status" role="status">Extracting English and French text offline…</p>
+                  <p class="ocr-status" role="status">Extracting English text offline…</p>
                 }
                 @case ('failed') {
                   <p class="ocr-status ocr-status--error">Offline text extraction failed.</p>
@@ -137,7 +153,7 @@
                       <p>Confidence: {{ photo.ocrConfidence | number: '1.0-0' }}%</p>
                     }
                   } @else {
-                    <p>No readable English or French text was detected in this photo.</p>
+                    <p>No readable English text was detected in this photo.</p>
                   }
                 }
               }
