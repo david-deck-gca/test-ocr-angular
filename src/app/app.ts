@@ -38,6 +38,7 @@ export class App {
   protected readonly gpsStatus = this.geolocationService.status;
   protected readonly gpsDetails = this.geolocationService.details;
   protected readonly latestCoordinates = this.geolocationService.latestCoordinates;
+  protected readonly showMobileCaptureOptions = this.shouldShowMobileCaptureOptions();
 
   protected readonly pageTitle = 'Offline Photo Log';
   protected readonly onlineMessage = computed(() =>
@@ -141,7 +142,7 @@ export class App {
     this.cropDialogPhoto.set(null);
     await this.photoStorageService.markPhotoOcrProcessing(cropDialogPhoto.id);
     await this.refreshPhotos();
-    this.feedbackMessage.set('Extracting English and French text offline…');
+    this.feedbackMessage.set('Extracting English text offline…');
 
     try {
       const ocrBlob = selection
@@ -153,7 +154,7 @@ export class App {
       this.feedbackMessage.set(
         extractedText.text
           ? 'Offline text extraction finished and was stored with the photo.'
-          : 'Offline text extraction finished. No readable English or French text was detected.',
+          : 'Offline text extraction finished. No readable English text was detected.',
       );
     } catch {
       await this.photoStorageService.failPhotoOcr(cropDialogPhoto.id);
@@ -203,6 +204,17 @@ export class App {
     await this.refreshPhotos();
   }
 
+  private shouldShowMobileCaptureOptions(): boolean {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      return false;
+    }
+
+    const supportsCoarsePointer =
+      typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+
+    return supportsCoarsePointer || navigator.maxTouchPoints > 0;
+  }
+
   private openCropDialogForSavedPhotoId(photoId: string, blob: Blob): void {
     const savedPhoto = this.photos().find((photo) => photo.id === photoId);
 
@@ -239,7 +251,7 @@ export class App {
 
       context.drawImage(rasterImage, cropLeft, cropTop, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-      return await this.canvasToBlob(canvas, sourceBlob.type || 'image/jpeg');
+      return await this.canvasToBlob(canvas, 'image/png');
     } finally {
       this.releaseRasterImage(rasterImage);
     }
