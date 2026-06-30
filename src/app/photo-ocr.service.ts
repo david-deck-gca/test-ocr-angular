@@ -1,6 +1,8 @@
 import { Injectable } from '@angular/core';
 import { createWorker, OEM, PSM, type Worker } from 'tesseract.js';
 
+import { normalizeOcrText } from './ocr-text-normalizer';
+
 type LoadedRasterImage = HTMLImageElement | ImageBitmap;
 
 export interface PhotoOcrExtraction {
@@ -18,7 +20,7 @@ export class PhotoOcrService {
     const worker = await this.getWorker();
     const recognitionInput = await this.prepareRecognitionInput(photoBlob);
     const result = await worker.recognize(recognitionInput);
-    const text = this.normalizeText(result.data.text);
+    const text = normalizeOcrText(result.data.text);
     const confidence = Number.isFinite(result.data.confidence) ? result.data.confidence : null;
 
     return {
@@ -151,26 +153,5 @@ export class PhotoOcrService {
 
   private buildAssetDirectoryUrl(relativePath: string): string {
     return this.buildAssetUrl(`${relativePath}/`).replace(/\/$/, '');
-  }
-
-  private normalizeText(rawText: string): string | null {
-    const normalizedText = rawText
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .map((line) => line.trim())
-      .map((line) => this.normalizeCommonUnitMisreads(line))
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    return normalizedText.length > 0 ? normalizedText : null;
-  }
-
-  private normalizeCommonUnitMisreads(line: string): string {
-    return line
-      .replace(/\b([A-Z]{3,})\s*[~_=.:,-]+\s*(?=\d)/g, '$1 ')
-      .replace(/\b([A-Z]{3,})\s{2,}(?=\d)/g, '$1 ')
-      .replace(/(?<=\d)K6\b/g, 'KG')
-      .replace(/(?<=\d)(?:L8|18)\b/g, 'LB');
   }
 }

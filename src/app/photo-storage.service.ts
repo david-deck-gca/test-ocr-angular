@@ -1,5 +1,7 @@
 import { Injectable } from '@angular/core';
 
+import { type PhotoOcrProvider } from './ocr-provider';
+
 export interface PhotoCoordinates {
   latitude: number;
   longitude: number;
@@ -17,6 +19,7 @@ export interface PendingPhotoOcrJob {
 export interface PhotoOcrUpdate {
   text: string | null;
   confidence: number | null;
+  provider: PhotoOcrProvider;
 }
 
 interface StoredPhotoRecord {
@@ -30,12 +33,14 @@ interface StoredPhotoRecord {
   ocrText: string | null;
   ocrConfidence: number | null;
   ocrStatus: PhotoOcrStatus;
+  ocrProvider: PhotoOcrProvider | null;
 }
 
-type StoredPhotoRecordLike = Omit<StoredPhotoRecord, 'ocrText' | 'ocrConfidence' | 'ocrStatus'> & {
+type StoredPhotoRecordLike = Omit<StoredPhotoRecord, 'ocrText' | 'ocrConfidence' | 'ocrStatus' | 'ocrProvider'> & {
   ocrText?: string | null;
   ocrConfidence?: number | null;
   ocrStatus?: PhotoOcrStatus;
+  ocrProvider?: PhotoOcrProvider | null;
 };
 
 export interface SavedPhoto {
@@ -48,6 +53,7 @@ export interface SavedPhoto {
   ocrText: string | null;
   ocrConfidence: number | null;
   ocrStatus: PhotoOcrStatus;
+  ocrProvider: PhotoOcrProvider | null;
   previewUrl: string;
 }
 
@@ -55,7 +61,7 @@ export interface SavedPhoto {
 export class PhotoStorageService {
   private readonly databaseName = 'offline-photo-log';
   private readonly storeName = 'photos';
-  private readonly databaseVersion = 2;
+  private readonly databaseVersion = 3;
   private readonly fallbackRecords: StoredPhotoRecord[] = [];
   private readonly previewUrls = new Map<string, string>();
 
@@ -73,6 +79,7 @@ export class PhotoStorageService {
       ocrText: null,
       ocrConfidence: null,
       ocrStatus: 'pending',
+      ocrProvider: null,
     };
 
     if (!this.isIndexedDbSupported()) {
@@ -113,6 +120,7 @@ export class PhotoStorageService {
       ocrText: record.ocrText,
       ocrConfidence: record.ocrConfidence,
       ocrStatus: record.ocrStatus,
+      ocrProvider: record.ocrProvider,
       previewUrl: this.createPreviewUrl(record.id, record.blob),
     }));
   }
@@ -161,10 +169,11 @@ export class PhotoStorageService {
     };
   }
 
-  async markPhotoOcrProcessing(id: string): Promise<void> {
+  async markPhotoOcrProcessing(id: string, provider: PhotoOcrProvider): Promise<void> {
     await this.updatePhotoRecord(id, (record) => ({
       ...record,
       ocrStatus: 'processing',
+      ocrProvider: provider,
     }));
   }
 
@@ -174,15 +183,17 @@ export class PhotoStorageService {
       ocrText: update.text,
       ocrConfidence: update.confidence,
       ocrStatus: 'done',
+      ocrProvider: update.provider,
     }));
   }
 
-  async failPhotoOcr(id: string): Promise<void> {
+  async failPhotoOcr(id: string, provider: PhotoOcrProvider): Promise<void> {
     await this.updatePhotoRecord(id, (record) => ({
       ...record,
       ocrText: null,
       ocrConfidence: null,
       ocrStatus: 'failed',
+      ocrProvider: provider,
     }));
   }
 
@@ -200,6 +211,7 @@ export class PhotoStorageService {
             store.put({
               ...record,
               ocrStatus: 'pending',
+              ocrProvider: null,
             }),
           );
         }
@@ -216,17 +228,23 @@ export class PhotoStorageService {
       this.fallbackRecords.splice(index, 1, {
         ...record,
         ocrStatus: 'pending',
+        ocrProvider: null,
       });
     }
   }
 
   async preparePhotoOcrRetry(id: string): Promise<PendingPhotoOcrJob | null> {
-    return this.updatePhotoRecord(id, (record) => ({
-      ...record,
-      ocrText: null,
-      ocrConfidence: null,
-      ocrStatus: 'pending',
-    }), true);
+    return this.updatePhotoRecord(
+      id,
+      (record) => ({
+        ...record,
+        ocrText: null,
+        ocrConfidence: null,
+        ocrStatus: 'pending',
+        ocrProvider: null,
+      }),
+      true,
+    );
   }
 
   async deletePhoto(id: string): Promise<void> {
@@ -403,6 +421,7 @@ export class PhotoStorageService {
       ocrText: record.ocrText ?? null,
       ocrConfidence: record.ocrConfidence ?? null,
       ocrStatus: record.ocrStatus ?? 'pending',
+      ocrProvider: record.ocrProvider ?? null,
     };
   }
 }
