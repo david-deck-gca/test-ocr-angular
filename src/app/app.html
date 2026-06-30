@@ -85,6 +85,68 @@
       }
     </div>
 
+    <section class="ocr-provider" aria-labelledby="ocr-provider-title">
+      <div>
+        <h2 id="ocr-provider-title">Text recognition</h2>
+
+        @if (isOnline()) {
+          <p>Choose the OCR engine to use for the next extraction and enter your Azure key to enable Azure OCR.</p>
+        } @else {
+          <p>The device is offline, so OCR is limited to Tesseract.js until the connection returns.</p>
+        }
+      </div>
+
+      @if (isOnline()) {
+        <label class="ocr-provider__field" for="azure-api-key">
+          <span class="ocr-provider__field-label">Azure Document Intelligence key</span>
+          <input
+            id="azure-api-key"
+            type="password"
+            [value]="azureApiKey()"
+            autocomplete="off"
+            spellcheck="false"
+            (input)="updateAzureApiKey($event)"
+          />
+        </label>
+
+        @if (!hasAzureApiKey()) {
+          <p class="ocr-provider__hint">Enter a key to enable Azure Document Intelligence.</p>
+        }
+      }
+
+      <div class="ocr-provider__options" role="radiogroup" aria-label="OCR provider">
+        <label class="ocr-provider__option" [class.ocr-provider__option--selected]="activeOcrProvider() === 'tesseract'">
+          <input
+            type="radio"
+            name="ocr-provider"
+            value="tesseract"
+            [checked]="activeOcrProvider() === 'tesseract'"
+            (change)="selectOcrProvider('tesseract')"
+          />
+          <span class="ocr-provider__name">Tesseract.js</span>
+          <span class="ocr-provider__description">Runs fully in the browser and remains available offline.</span>
+        </label>
+
+        @if (isOnline()) {
+          <label
+            class="ocr-provider__option"
+            [class.ocr-provider__option--selected]="selectedOcrProvider() === 'azure-document-intelligence'"
+          >
+            <input
+              type="radio"
+              name="ocr-provider"
+              value="azure-document-intelligence"
+              [checked]="activeOcrProvider() === 'azure-document-intelligence'"
+              [disabled]="!hasAzureApiKey()"
+              (change)="selectOcrProvider('azure-document-intelligence')"
+            />
+            <span class="ocr-provider__name">Azure Document Intelligence</span>
+            <span class="ocr-provider__description">Uses the online Read model from your Azure resource.</span>
+          </label>
+        }
+      </div>
+    </section>
+
     @if (feedbackMessage(); as message) {
       <p class="feedback" role="status">{{ message }}</p>
     }
@@ -129,23 +191,25 @@
 
               @switch (photo.ocrStatus) {
                 @case ('pending') {
-                  <p class="ocr-status">Select a text area before running offline OCR.</p>
+                  <p class="ocr-status">{{ getPendingOcrMessage() }}</p>
 
                   <button type="button" class="secondary-button" (click)="openTextCropDialog(photo)">
                     Select text area
                   </button>
                 }
                 @case ('processing') {
-                  <p class="ocr-status" role="status">Extracting English text offline…</p>
+                  <p class="ocr-status" role="status">{{ getPhotoProcessingMessage(photo) }}</p>
                 }
                 @case ('failed') {
-                  <p class="ocr-status ocr-status--error">Offline text extraction failed.</p>
+                  <p class="ocr-status ocr-status--error">{{ getPhotoFailureMessage(photo) }}</p>
 
                   <button type="button" class="secondary-button" (click)="openTextCropDialog(photo)">
                     Select text area again
                   </button>
                 }
                 @default {
+                  <p class="ocr-provider-note">Provider: {{ getOcrProviderLabel(photo.ocrProvider) }}</p>
+
                   @if (photo.ocrText) {
                     <p class="ocr-text">{{ photo.ocrText }}</p>
 
@@ -184,6 +248,7 @@
   @if (cropDialogPhoto(); as photo) {
     <app-photo-crop-dialog
       [imageUrl]="photo.previewUrl"
+      [ocrProviderLabel]="photo.providerLabel"
       (cancelled)="cancelCropDialog()"
       (confirmCrop)="confirmCrop($event)"
     />

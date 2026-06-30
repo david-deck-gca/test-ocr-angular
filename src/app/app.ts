@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 
+import { AzureDocumentIntelligenceService } from './azure-document-intelligence.service';
 import { GeolocationService } from './geolocation.service';
 import { MapsNavigationService } from './maps-navigation.service';
+import { DEFAULT_PHOTO_OCR_PROVIDER, getPhotoOcrProviderLabel, type PhotoOcrProvider } from './ocr-provider';
 import { CropSelection, PhotoCropDialogComponent } from './photo-crop-dialog';
 import { NetworkStatusService } from './network-status.service';
 import { PhotoOcrService } from './photo-ocr.service';
@@ -10,6 +12,8 @@ import { PendingPhotoOcrJob, PhotoStorageService, SavedPhoto } from './photo-sto
 
 interface CropDialogPhoto extends PendingPhotoOcrJob {
   previewUrl: string;
+  provider: PhotoOcrProvider;
+  providerLabel: string;
 }
 
 type LoadedRasterImage = HTMLImageElement | ImageBitmap;
@@ -26,6 +30,7 @@ export class App {
   private readonly geolocationService = inject(GeolocationService);
   private readonly mapsNavigationService = inject(MapsNavigationService);
   private readonly photoOcrService = inject(PhotoOcrService);
+  private readonly azureDocumentIntelligenceService = inject(AzureDocumentIntelligenceService);
   private readonly photoStorageService = inject(PhotoStorageService);
 
   protected readonly photos = signal<SavedPhoto[]>([]);
@@ -33,18 +38,25 @@ export class App {
   protected readonly navigatingPhotoId = signal<string | null>(null);
   protected readonly feedbackMessage = signal<string | null>(null);
   protected readonly cropDialogPhoto = signal<CropDialogPhoto | null>(null);
+  protected readonly azureApiKey = signal('');
+  protected readonly selectedOcrProvider = signal<PhotoOcrProvider>(DEFAULT_PHOTO_OCR_PROVIDER);
 
   protected readonly isOnline = this.networkStatusService.isOnline;
   protected readonly gpsStatus = this.geolocationService.status;
   protected readonly gpsDetails = this.geolocationService.details;
   protected readonly latestCoordinates = this.geolocationService.latestCoordinates;
   protected readonly showMobileCaptureOptions = this.shouldShowMobileCaptureOptions();
+  protected readonly hasAzureApiKey = computed(() => this.azureApiKey().trim().length > 0);
+  protected readonly activeOcrProvider = computed<PhotoOcrProvider>(() =>
+    this.canUseAzureDocumentIntelligence(this.selectedOcrProvider()) ? this.selectedOcrProvider() : DEFAULT_PHOTO_OCR_PROVIDER,
+  );
+  protected readonly activeOcrProviderLabel = computed(() => getPhotoOcrProviderLabel(this.activeOcrProvider()));
 
   protected readonly pageTitle = 'Offline Photo Log';
   protected readonly onlineMessage = computed(() =>
     this.isOnline()
-      ? 'Online: the app is connected.'
-      : 'Offline: you can still take photos and save them locally.',
+      ? 'Online: choose between Tesseract.js and Azure Document Intelligence after entering an Azure key.'
+      : 'Offline: you can still take photos, save them locally, and run Tesseract.js OCR.',
   );
   protected readonly storageSummary = computed(() => {
     const photoCount = this.photos().length;
@@ -53,6 +65,25 @@ export class App {
 
   constructor() {
     void this.initialize();
+  }
+
+  protected selectOcrProvider(provider: PhotoOcrProvider): void {
+    if (provider === 'azure-document-intelligence' && !this.isOnline()) {
+      this.selectedOcrProvider.set(DEFAULT_PHOTO_OCR_PROVIDER);
+      return;
+    }
+
+    this.selectedOcrProvider.set(provider);
+  }
+
+  protected updateAzureApiKey(event: Event): void {
+    const input = event.target;
+
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    this.azureApiKey.set(input.value);
   }
 
   protected async onPhotoSelected(event: Event): Promise<void> {
@@ -116,15 +147,19 @@ export class App {
       return;
     }
 
+    const provider = this.activeOcrProvider();
+
     this.cropDialogPhoto.set({
       ...ocrJob,
+      provider,
+      providerLabel: getPhotoOcrProviderLabel(provider),
       previewUrl: photo.previewUrl,
     });
 
     this.feedbackMessage.set(
       photo.ocrStatus === 'failed'
-        ? 'Select a new text area and retry OCR.'
-        : 'Select the text area to analyze offline.',
+        ? `Select a new text area and retry ${getPhotoOcrProviderLabel(provider)}.`
+        : `Select the text area to analyze with ${getPhotoOcrProviderLabel(provider)}.`,
     );
   }
 
@@ -140,28 +175,51 @@ export class App {
     }
 
     this.cropDialogPhoto.set(null);
-    await this.photoStorageService.markPhotoOcrProcessing(cropDialogPhoto.id);
+    const provider = this.resolveOcrProvider(cropDialogPhoto.provider);
+
+    await this.photoStorageService.markPhotoOcrProcessing(cropDialogPhoto.id, provider);
     await this.refreshPhotos();
-    this.feedbackMessage.set('Extracting English text offline…');
+    this.feedbackMessage.set(this.getProcessingFeedbackMessage(provider));
 
     try {
       const ocrBlob = selection
         ? await this.createCroppedBlob(cropDialogPhoto.blob, selection)
         : cropDialogPhoto.blob;
-      const extractedText = await this.photoOcrService.extractText(ocrBlob);
+      const extractedText = await this.extractTextWithProvider(ocrBlob, provider);
 
-      await this.photoStorageService.completePhotoOcr(cropDialogPhoto.id, extractedText);
+      await this.photoStorageService.completePhotoOcr(cropDialogPhoto.id, {
+        ...extractedText,
+        provider,
+      });
       this.feedbackMessage.set(
         extractedText.text
-          ? 'Offline text extraction finished and was stored with the photo.'
-          : 'Offline text extraction finished. No readable English text was detected.',
+          ? `${getPhotoOcrProviderLabel(provider)} text extraction finished and was stored with the photo.`
+          : `${getPhotoOcrProviderLabel(provider)} text extraction finished. No readable English text was detected.`,
       );
     } catch {
-      await this.photoStorageService.failPhotoOcr(cropDialogPhoto.id);
-      this.feedbackMessage.set('Offline text extraction failed for this photo.');
+      await this.photoStorageService.failPhotoOcr(cropDialogPhoto.id, provider);
+      this.feedbackMessage.set(`${getPhotoOcrProviderLabel(provider)} text extraction failed for this photo.`);
     } finally {
       await this.refreshPhotos();
     }
+  }
+
+  protected getOcrProviderLabel(provider: PhotoOcrProvider | null): string {
+    return getPhotoOcrProviderLabel(provider ?? this.activeOcrProvider());
+  }
+
+  protected getPendingOcrMessage(): string {
+    return this.isOnline()
+      ? `Select a text area before running ${this.activeOcrProviderLabel()}.`
+      : 'Select a text area before running Tesseract.js offline.';
+  }
+
+  protected getPhotoProcessingMessage(photo: SavedPhoto): string {
+    return this.getProcessingFeedbackMessage(photo.ocrProvider ?? this.activeOcrProvider());
+  }
+
+  protected getPhotoFailureMessage(photo: SavedPhoto): string {
+    return `${this.getOcrProviderLabel(photo.ocrProvider)} text extraction failed.`;
   }
 
   protected async openDirectionsToPhoto(photo: SavedPhoto): Promise<void> {
@@ -222,11 +280,37 @@ export class App {
       return;
     }
 
+    const provider = this.activeOcrProvider();
+
     this.cropDialogPhoto.set({
       id: photoId,
       blob,
+      provider,
+      providerLabel: getPhotoOcrProviderLabel(provider),
       previewUrl: savedPhoto.previewUrl,
     });
+  }
+
+  private resolveOcrProvider(provider: PhotoOcrProvider): PhotoOcrProvider {
+    return this.canUseAzureDocumentIntelligence(provider) ? provider : DEFAULT_PHOTO_OCR_PROVIDER;
+  }
+
+  private extractTextWithProvider(blob: Blob, provider: PhotoOcrProvider) {
+    return provider === 'azure-document-intelligence'
+      ? this.azureDocumentIntelligenceService.extractText(blob, this.azureApiKey())
+      : this.photoOcrService.extractText(blob);
+  }
+
+  private canUseAzureDocumentIntelligence(provider: PhotoOcrProvider): boolean {
+    return provider !== 'azure-document-intelligence' || (this.isOnline() && this.hasAzureApiKey());
+  }
+
+  private getProcessingFeedbackMessage(provider: PhotoOcrProvider): string {
+    return provider === 'azure-document-intelligence'
+      ? 'Extracting text with Azure Document Intelligence…'
+      : this.isOnline()
+        ? 'Extracting English text with Tesseract.js…'
+        : 'Extracting English text with Tesseract.js offline…';
   }
 
   private async createCroppedBlob(sourceBlob: Blob, selection: CropSelection): Promise<Blob> {

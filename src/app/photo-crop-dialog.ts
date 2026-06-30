@@ -22,10 +22,7 @@ interface DragPoint {
           <div>
             <p class="crop-dialog__eyebrow">Manual crop before OCR</p>
             <h2 id="crop-dialog-title">Select the text area</h2>
-            <p>
-              Drag over the image to choose the region to analyze offline. English OCR will run only
-              on the selected area.
-            </p>
+            <p>Drag over the image to choose the region to analyze with {{ ocrProviderLabel() }}. OCR will run only on the selected area.</p>
           </div>
 
           <button type="button" class="secondary-button" (click)="cancelled.emit()">Close</button>
@@ -219,6 +216,7 @@ export class PhotoCropDialogComponent {
   private readonly minimumSelectionSize = 0.02;
 
   readonly imageUrl = input.required<string>();
+  readonly ocrProviderLabel = input('Tesseract.js');
   readonly cancelled = output<void>();
   readonly confirmCrop = output<CropSelection | null>();
 
